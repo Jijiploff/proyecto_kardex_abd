@@ -315,7 +315,6 @@
       },
       onChange: function(value) {
         const infoDiv = document.getElementById('product-info');
-        if (!infoDiv) return;
         if (value) {
             const item = this.options[value];
             infoDiv.textContent = item ? `Descripción: ${item.Descripcion}` : '';

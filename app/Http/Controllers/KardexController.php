@@ -45,157 +45,233 @@ class KardexController extends Controller
         $sinDatosParaPeriodo = false; // Flag para años sin registros
         
         $tiposDoc = Tipodoc::select('TipoDoc', 'Descripcion')->orderBy('Descripcion')->get();
+
+        $aniosDisponibles = [];
+        $mesesDisponibles = [];
+        $periodosPorAnio = [];
+        try {
+            $pdo = DB::connection()->getPdo();
+            $stmt = $pdo->prepare("EXEC _Kardex_PeriodosDisponibles");
+            $stmt->execute();
+            $periodos = collect($stmt->fetchAll(\PDO::FETCH_OBJ));
+            $aniosDisponibles = $periodos->pluck('Anio')->unique()->sortDesc()->values()->all();
+            $mesesDisponibles = $periodos->pluck('Mes')->unique()->sort()->values()->all();
+            
+            // Agrupar meses por año para lógica dinámica
+            $periodosPorAnio = $periodos->groupBy('Anio')->map(function ($items) {
+                return $items->pluck('Mes')->unique()->sort()->values()->all();
+            })->toArray();
+            
+        } catch (\Exception $e) {
+            Log::error("Error obteniendo periodos: " . $e->getMessage());
+        }
+        
+        // Si no hay datos, cargar valores por defecto
+        if (empty($aniosDisponibles)) {
+            $aniosDisponibles = range(date('Y'), 2000);
+            foreach($aniosDisponibles as $a) { $periodosPorAnio[$a] = range(1, 12); }
+        }
+        if (empty($mesesDisponibles)) {
+            $mesesDisponibles = range(1, 12);
+        }
         
         if ($productoSeleccionadoId) {
-            try {
-                $productoModel = Producto::find($productoSeleccionadoId);
-                $productoId = trim((string)$productoSeleccionadoId);
-                
-                // Lógica de mapeo estricto según tabla de referencia
-                DB::statement('SET ARITHABORT ON; SET ANSI_WARNINGS ON;');
-                $pdo = DB::connection()->getPdo();
+            $productoModel = Producto::find($productoSeleccionadoId);
+            $productoId = trim((string)$productoSeleccionadoId);
 
-                if ($estrategia === 'tradicional') {
-                    // ... (resto del código de selección de SP)
-                    if ($consultarPor === 'fechas' && $request->query('fecha_inicio') && $request->query('fecha_fin')) {
-                        $fInicio = (string)$request->query('fecha_inicio');
-                        $fFin = (string)$request->query('fecha_fin');
-                        
-                        $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas_Tradicional ?, ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, $fInicio, \PDO::PARAM_STR);
-                        $stmt->bindValue(3, $fFin, \PDO::PARAM_STR);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
-                    } elseif ($consultarPor === 'mes' && $request->query('mes') && $request->query('anio_mes')) {
-                        $anio = $request->query('anio_mes');
-                        $mes = str_pad($request->query('mes'), 2, '0', STR_PAD_LEFT);
-                        $fInicio = date('Y-m-d', strtotime("$anio-$mes-01"));
-                        $fFin = date('Y-m-t', strtotime($fInicio));
-                        
-                        $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas_Tradicional ?, ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, $fInicio, \PDO::PARAM_STR);
-                        $stmt->bindValue(3, $fFin, \PDO::PARAM_STR);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
-                    } elseif ($consultarPor === 'anio' && $request->query('anio')) {
-                        $anio = $request->query('anio');
-                        $fInicio = date('Y-m-d', strtotime("$anio-01-01"));
-                        $fFin = date('Y-m-d', strtotime("$anio-12-31"));
-                        
-                        $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas_Tradicional ?, ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, $fInicio, \PDO::PARAM_STR);
-                        $stmt->bindValue(3, $fFin, \PDO::PARAM_STR);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+            $cacheKey = 'kardex_' . md5(json_encode([
+                $productoId,
+                $estrategia,
+                $consultarPor,
+                $request->query('fecha_inicio'),
+                $request->query('fecha_fin'),
+                $request->query('mes'),
+                $request->query('anio_mes'),
+                $request->query('anio')
+            ]));
+
+            $cachedData = \Illuminate\Support\Facades\Cache::store('file')->remember($cacheKey, now()->addMinutes(10), function() use ($productoId, $estrategia, $consultarPor, $request, $tiempoInicio) {
+                $sinDatosParaPeriodoLocal = false;
+                $kardexLocal = collect();
+                
+                try {
+                    // Lógica de mapeo estricto según tabla de referencia
+                    DB::statement('SET ARITHABORT ON; SET ANSI_WARNINGS ON;');
+                    $pdo = DB::connection()->getPdo();
+
+                    $tiempoSpInicio = microtime(true);
+                    $tiempoSpSecs = 0;
+
+                    if ($estrategia === 'tradicional') {
+                        // ... (resto del código de selección de SP)
+                        if ($consultarPor === 'fechas' && $request->query('fecha_inicio') && $request->query('fecha_fin')) {
+                            $fInicio = (string)$request->query('fecha_inicio');
+                            $fFin = (string)$request->query('fecha_fin');
+                            
+                            $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas_Tradicional ?, ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, $fInicio, \PDO::PARAM_STR);
+                            $stmt->bindValue(3, $fFin, \PDO::PARAM_STR);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        } elseif ($consultarPor === 'mes' && $request->query('mes') && $request->query('anio_mes')) {
+                            $anio = $request->query('anio_mes');
+                            $mes = str_pad($request->query('mes'), 2, '0', STR_PAD_LEFT);
+                            $fInicio = date('Y-m-d', strtotime("$anio-$mes-01"));
+                            $fFin = date('Y-m-t', strtotime($fInicio));
+                            
+                            $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas_Tradicional ?, ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, $fInicio, \PDO::PARAM_STR);
+                            $stmt->bindValue(3, $fFin, \PDO::PARAM_STR);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        } elseif ($consultarPor === 'anio' && $request->query('anio')) {
+                            $anio = $request->query('anio');
+                            $fInicio = date('Y-m-d', strtotime("$anio-01-01"));
+                            $fFin = date('Y-m-d', strtotime("$anio-12-31"));
+                            
+                            $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas_Tradicional ?, ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, $fInicio, \PDO::PARAM_STR);
+                            $stmt->bindValue(3, $fFin, \PDO::PARAM_STR);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        } else {
+                            // Consulta general tradicional
+                            $stmt = $pdo->prepare("EXEC _Kardex_Movimientos ?, ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, '1900-01-01', \PDO::PARAM_STR);
+                            $stmt->bindValue(3, date('Y-12-31'), \PDO::PARAM_STR);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        }
                     } else {
-                        // Consulta general tradicional
-                        $stmt = $pdo->prepare("EXEC _Kardex_Movimientos ?, ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, '1900-01-01', \PDO::PARAM_STR);
-                        $stmt->bindValue(3, date('Y-12-31'), \PDO::PARAM_STR);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        // Estrategias Optimizadas
+                        if ($consultarPor === 'fechas' && $request->query('fecha_inicio') && $request->query('fecha_fin')) {
+                            $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas ?, ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, (string)$request->query('fecha_inicio'), \PDO::PARAM_STR);
+                            $stmt->bindValue(3, (string)$request->query('fecha_fin'), \PDO::PARAM_STR);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        } elseif ($consultarPor === 'mes' && $request->query('mes') && $request->query('anio_mes')) {
+                            $stmt = $pdo->prepare("EXEC _Kardex_Mensual ?, ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, (int)$request->query('mes'), \PDO::PARAM_INT);
+                            $stmt->bindValue(3, (int)$request->query('anio_mes'), \PDO::PARAM_INT);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        } elseif ($consultarPor === 'anio' && $request->query('anio')) {
+                            $stmt = $pdo->prepare("EXEC _Kardex_Anual ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, (int)$request->query('anio'), \PDO::PARAM_INT);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        } else {
+                            // Optimizado por defecto
+                            $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas ?, ?, ?");
+                            $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
+                            $stmt->bindValue(2, '1900-01-01', \PDO::PARAM_STR);
+                            $stmt->bindValue(3, date('Y-12-31'), \PDO::PARAM_STR);
+                            $stmt->execute();
+                            $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                        }
                     }
-                } else {
-                    // Estrategias Optimizadas
-                    if ($consultarPor === 'fechas' && $request->query('fecha_inicio') && $request->query('fecha_fin')) {
-                        $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas ?, ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, (string)$request->query('fecha_inicio'), \PDO::PARAM_STR);
-                        $stmt->bindValue(3, (string)$request->query('fecha_fin'), \PDO::PARAM_STR);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
-                    } elseif ($consultarPor === 'mes' && $request->query('mes') && $request->query('anio_mes')) {
-                        $stmt = $pdo->prepare("EXEC _Kardex_Mensual ?, ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, (int)$request->query('mes'), \PDO::PARAM_INT);
-                        $stmt->bindValue(3, (int)$request->query('anio_mes'), \PDO::PARAM_INT);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
-                    } elseif ($consultarPor === 'anio' && $request->query('anio')) {
-                        $stmt = $pdo->prepare("EXEC _Kardex_Anual ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, (int)$request->query('anio'), \PDO::PARAM_INT);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
-                    } else {
-                        // Optimizado por defecto
-                        $stmt = $pdo->prepare("EXEC _Kardex_RangoFechas ?, ?, ?");
-                        $stmt->bindValue(1, $productoId, \PDO::PARAM_STR);
-                        $stmt->bindValue(2, '1900-01-01', \PDO::PARAM_STR);
-                        $stmt->bindValue(3, date('Y-12-31'), \PDO::PARAM_STR);
-                        $stmt->execute();
-                        $resultados = $stmt->fetchAll(\PDO::FETCH_OBJ);
+                    
+                    $tiempoSpSecs = microtime(true) - $tiempoSpInicio;
+
+                    // Si no hay resultados o solo hay un acumulado de 0, marcar como sin datos
+                    if (empty($resultados)) {
+                        $sinDatosParaPeriodoLocal = true;
                     }
+
+                    // Transformar resultados de los SP al formato unificado de la vista
+                    $kardexLocal = collect($resultados)->map(function($row) {
+                        $data = (array)$row;
+                        
+                        // Mapeo estricto basado en la especificación técnica suministrada
+                        $fechaHora     = $data['FechaHora'] ?? now();
+                        $documento     = $data['Documento'] ?? '—';
+                        $tipoMov       = $data['TipoMovimiento'] ?? '—';
+                        $costoUnit     = floatval($data['CostoUnitario'] ?? 0);
+                        $cantidad      = floatval($data['Cantidad'] ?? 0);
+                        $valorTotal    = floatval($data['ValorTotal'] ?? 0);
+                        $stockCalc     = floatval($data['StockCalculado'] ?? 0);
+                        
+                        // Determinar tipo (entrada/salida) para estilos visuales (badges/colores)
+                        // REGLA: Si contiene 'SALIDA' es negativo/salida, sin importar si dice 'INICIAL'.
+                        $esSalida  = (stripos($tipoMov, 'SALIDA') !== false);
+                        $esEntrada = !$esSalida && (stripos($tipoMov, 'INGRESO') !== false || stripos($tipoMov, 'ENTRADA') !== false || stripos($tipoMov, 'INICIAL') !== false);
+                        
+                        // Aplicar signo a la cantidad según el tipo de movimiento
+                        $cantidadConSigno = abs($cantidad);
+                        if ($esSalida) {
+                            $cantidadConSigno = -$cantidadConSigno;
+                        }
+                        
+                        return (object)[
+                            'fecha'          => $fechaHora,
+                            'comprobante'    => $documento,
+                            'tipo'           => $esSalida ? 'salida' : ($esEntrada ? 'entrada' : 'ajuste'),
+                            'tipo_nombre'    => $tipoMov,
+                            'cantidad'       => $cantidadConSigno,
+                            'costo_unitario' => $costoUnit,
+                            'costo_total'    => $valorTotal,
+                            'saldo'          => $stockCalc,
+                            'observacion'    => '', // Eliminado de la tabla pero mantenido en el objeto por compatibilidad
+                        ];
+                    });
+
+                } catch (\Exception $e) {
+                    // Capturar errores de desbordamiento u otros errores de SQL
+                    $sinDatosParaPeriodoLocal = true;
+                    // Loguear error para depuración interna
+                    Log::error("Error en consulta Kardex: " . $e->getMessage());
                 }
 
-                // Si no hay resultados o solo hay un acumulado de 0, marcar como sin datos
-                if (empty($resultados)) {
-                    $sinDatosParaPeriodo = true;
+                // Recalcular totales para los summary pills basados en los datos reales del SP
+                $totalEntradasLocal = 0;
+                $totalSalidasLocal = 0;
+                foreach ($kardexLocal as $mov) {
+                    // No sumar el registro acumulado inicial a los totales del periodo
+                    if ($mov->comprobante === 'ACUMULADO' || stripos($mov->tipo_nombre, 'INICIAL') !== false) continue;
+                    
+                    if ($mov->tipo == 'entrada') $totalEntradasLocal += abs($mov->cantidad);
+                    if ($mov->tipo == 'salida') $totalSalidasLocal += abs($mov->cantidad);
                 }
+                $stockActualLocal = $kardexLocal->last()->saldo ?? 0;
 
-                // Transformar resultados de los SP al formato unificado de la vista
-                $kardex = collect($resultados)->map(function($row) {
-                $data = (array)$row;
-                
-                // Mapeo estricto basado en la especificación técnica suministrada
-                $fechaHora     = $data['FechaHora'] ?? now();
-                $documento     = $data['Documento'] ?? '—';
-                $tipoMov       = $data['TipoMovimiento'] ?? '—';
-                $costoUnit     = floatval($data['CostoUnitario'] ?? 0);
-                $cantidad      = floatval($data['Cantidad'] ?? 0);
-                $valorTotal    = floatval($data['ValorTotal'] ?? 0);
-                $stockCalc     = floatval($data['StockCalculado'] ?? 0);
-                
-                // Determinar tipo (entrada/salida) para estilos visuales (badges/colores)
-                // REGLA: Si contiene 'SALIDA' es negativo/salida, sin importar si dice 'INICIAL'.
-                $esSalida  = (stripos($tipoMov, 'SALIDA') !== false);
-                $esEntrada = !$esSalida && (stripos($tipoMov, 'INGRESO') !== false || stripos($tipoMov, 'ENTRADA') !== false || stripos($tipoMov, 'INICIAL') !== false);
-                
-                // Aplicar signo a la cantidad según el tipo de movimiento
-                $cantidadConSigno = abs($cantidad);
-                if ($esSalida) {
-                    $cantidadConSigno = -$cantidadConSigno;
-                }
-                
-                return (object)[
-                    'fecha'          => $fechaHora,
-                    'comprobante'    => $documento,
-                    'tipo'           => $esSalida ? 'salida' : ($esEntrada ? 'entrada' : 'ajuste'),
-                    'tipo_nombre'    => $tipoMov,
-                    'cantidad'       => $cantidadConSigno,
-                    'costo_unitario' => $costoUnit,
-                    'costo_total'    => $valorTotal,
-                    'saldo'          => $stockCalc,
-                    'observacion'    => '', // Eliminado de la tabla pero mantenido en el objeto por compatibilidad
+                $tiempoRespuestaLocal = number_format((microtime(true) - $tiempoInicio), 4);
+                $fechaConsultaLocal = now()->timezone('America/Lima')->format('d/m/Y H:i:s');
+
+                return [
+                    'kardex' => $kardexLocal,
+                    'totalEntradas' => $totalEntradasLocal,
+                    'totalSalidas' => $totalSalidasLocal,
+                    'stockActual' => $stockActualLocal,
+                    'sinDatosParaPeriodo' => $sinDatosParaPeriodoLocal,
+                    'tiempoRespuesta' => $tiempoRespuestaLocal,
+                    'tiempoSp' => $tiempoSpSecs ?? 0,
+                    'fechaConsulta' => $fechaConsultaLocal
                 ];
             });
 
-            } catch (\Exception $e) {
-                // Capturar errores de desbordamiento u otros errores de SQL
-                $sinDatosParaPeriodo = true;
-                // Loguear error para depuración interna
-                Log::error("Error en consulta Kardex: " . $e->getMessage());
-            }
-
-            // Recalcular totales para los summary pills basados en los datos reales del SP
-            $totalEntradas = 0;
-            $totalSalidas = 0;
-            foreach ($kardex as $mov) {
-                // No sumar el registro acumulado inicial a los totales del periodo
-                if ($mov->comprobante === 'ACUMULADO' || stripos($mov->tipo_nombre, 'INICIAL') !== false) continue;
-                
-                if ($mov->tipo == 'entrada') $totalEntradas += abs($mov->cantidad);
-                if ($mov->tipo == 'salida') $totalSalidas += abs($mov->cantidad);
-            }
-            $stockActual = $kardex->last()->saldo ?? 0;
+            // Extraer de la caché a las variables locales
+            $kardex = $cachedData['kardex'];
+            $totalEntradas = $cachedData['totalEntradas'];
+            $totalSalidas = $cachedData['totalSalidas'];
+            $stockActual = $cachedData['stockActual'];
+            $sinDatosParaPeriodo = $cachedData['sinDatosParaPeriodo'] ?? false;
+            $tiempoRespuesta = number_format((microtime(true) - $tiempoInicio), 4);
+            $tiempoSp = number_format($cachedData['tiempoSp'] ?? 0, 4);
+            $fechaConsulta = $cachedData['fechaConsulta'] ?? now()->timezone('America/Lima')->format('d/m/Y H:i:s');
+        } else {
+            $tiempoRespuesta = number_format((microtime(true) - $tiempoInicio), 4);
+            $tiempoSp = number_format(0, 4);
+            $fechaConsulta = now()->timezone('America/Lima')->format('d/m/Y H:i:s');
         }
 
-        $tiempoRespuesta = number_format((microtime(true) - $tiempoInicio), 3); // Segundos con 3 decimales
-        $fechaConsulta = now()->format('d/m/Y H:i:s');
         $totalRegistros = $kardex->count();
 
         // Paginación manual
@@ -207,6 +283,24 @@ class KardexController extends Controller
             'query' => $request->query(),
         ]);
 
+        if ($request->ajax()) {
+            return view('kardex._results', compact(
+                'kardex', 
+                'totalEntradas', 
+                'totalSalidas', 
+                'stockActual', 
+                'productoModel', 
+                'tiposDoc',
+                'tiempoRespuesta',
+                'tiempoSp',
+                'estrategia',
+                'fechaConsulta',
+                'totalRegistros',
+                'nombreEstrategiaDisplay',
+                'sinDatosParaPeriodo'
+            ))->render();
+        }
+
         return view('kardex.index', compact(
             'kardex', 
             'totalEntradas', 
@@ -215,11 +309,15 @@ class KardexController extends Controller
             'productoModel', 
             'tiposDoc',
             'tiempoRespuesta',
+            'tiempoSp',
             'estrategia',
             'fechaConsulta',
             'totalRegistros',
             'nombreEstrategiaDisplay',
-            'sinDatosParaPeriodo'
+            'sinDatosParaPeriodo',
+            'aniosDisponibles',
+            'mesesDisponibles',
+            'periodosPorAnio'
         ));
     }
 
@@ -278,7 +376,7 @@ class KardexController extends Controller
 
             return response()->json([
                 'ok' => false,
-                'error' => 'No se pudo actualizar el estado de los índices.',
+                'error' => 'No se pudo actualizar el estado de los índices. Detalle: ' . $e->getMessage(),
             ], 500);
         }
     }

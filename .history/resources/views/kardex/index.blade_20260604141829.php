@@ -162,6 +162,11 @@
               <option value="{{ $productoModel->Producto }}" selected>{{ $productoModel->Producto }} &mdash; {{ $productoModel->Descripcion }}</option>
             @endif
           </select>
+          <div id="product-info" style="margin-top:10px; font-size:0.85rem; color: var(--text-muted); font-weight: 500;">
+            @if(isset($productoModel))
+              Descripción: {{ $productoModel->Descripcion }}
+            @endif
+          </div>
         </div>
 
         <div class="filter-section">
@@ -171,6 +176,16 @@
             <option value="optimizada" {{ request('estrategia') == 'optimizada' ? 'selected' : '' }}>Optimizada (Rápido)</option>
             <option value="optimizada_indices" {{ request('estrategia') == 'optimizada_indices' ? 'selected' : '' }}>Optimizada + Índices (Ultra Rápido)</option>
           </select>
+        </div>
+
+        <div class="filter-section" id="index-controls" style="display: {{ request('estrategia') == 'optimizada_indices' ? 'flex' : 'none' }}; flex-direction: column; gap: 10px;">
+          <label>Administrar índices</label>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div id="index-status" style="font-size: 0.95rem; font-weight: 600; color: var(--text);">Estado de índices: consultando...</div>
+            <button type="button" id="activar-indices" class="btn btn-secondary" style="padding: 10px 18px;">Activar índices</button>
+            <button type="button" id="desactivar-indices" class="btn btn-secondary" style="padding: 10px 18px;">Desactivar índices</button>
+          </div>
+          <div id="index-message" style="font-size: 0.85rem; color: var(--text-muted);">Activa o desactiva los índices cuando uses la estrategia Optimizada + Índices.</div>
         </div>
 
         <div class="filter-section">
@@ -234,17 +249,6 @@
 
       </div>
 
-      <div class="filter-section" id="index-controls" style="display: {{ request('estrategia') == 'optimizada_indices' ? 'flex' : 'none' }}; flex-direction: column; gap: 10px; margin-top: 12px; padding: 18px 16px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;">
-        <div style="display:flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;">
-          <div>
-            <div style="font-size: 0.95rem; font-weight: 700; color: var(--text); margin-bottom: 6px;">Administrar índices</div>
-            <div id="index-status" style="font-size: 0.9rem; color: var(--accent);">Estado de índices: consultando...</div>
-          </div>
-          <button type="button" id="index-action-button" class="btn btn-secondary" style="padding: 10px 18px;">Crear índices</button>
-        </div>
-        <div id="index-message" style="font-size: 0.85rem; color: var(--text-muted); margin-top: 8px;">Usa esta opción solo con la estrategia Optimizada + Índices.</div>
-      </div>
-
       <div style="display: flex; justify-content: flex-end; gap: 16px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);">
         <button type="button" class="btn btn-secondary" onclick="resetForm()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
@@ -276,17 +280,16 @@
 
 @push('scripts')
 <script>
-  document.addEventListener('DOMContentLoaded', function() {
-    const periodosPorAnio = @json($periodosPorAnio ?? []);
-    const mesesNombres = {
-        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
-        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
-        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-    };
+  const periodosPorAnio = @json($periodosPorAnio ?? []);
+  const mesesNombres = {
+      1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+      5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+      9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+  };
 
-    let tomSelectProduct;
-    let otherSelects = [];
-    let tsMes, tsAnioMes, tsAnio, tsEstrategia;
+  let tomSelectProduct;
+  let otherSelects = [];
+  let tsMes, tsAnioMes, tsAnio, tsEstrategia;
     const indicesEstadoUrl = '{{ route('kardex.indices.estado') }}';
     const indicesToggleUrl = '{{ route('kardex.indices.toggle') }}';
     // Inicializar TomSelect para Productos con AJAX Dinámico
@@ -315,7 +318,6 @@
       },
       onChange: function(value) {
         const infoDiv = document.getElementById('product-info');
-        if (!infoDiv) return;
         if (value) {
             const item = this.options[value];
             infoDiv.textContent = item ? `Descripción: ${item.Descripcion}` : '';
@@ -327,14 +329,7 @@
     });
 
     // Inicializar los otros selectores básicos con TomSelect para estilización consistente y scroll
-    tsEstrategia = new TomSelect('#estrategia', {
-        controlInput: null,
-        maxOptions: null,
-        dropdownParent: 'body',
-        onChange: function() {
-            actualizarIndexControls();
-        }
-    });
+    tsEstrategia = new TomSelect('#estrategia', { controlInput: null, maxOptions: null, dropdownParent: 'body' });
     tsAnio = new TomSelect('#sel_anio', { controlInput: null, maxOptions: null, dropdownParent: 'body' });
     
     tsAnioMes = new TomSelect('#sel_anio_mes', { 
@@ -353,45 +348,41 @@
     const indexControls = document.getElementById('index-controls');
     const indexStatus = document.getElementById('index-status');
     const indexMessage = document.getElementById('index-message');
-    const indexActionButton = document.getElementById('index-action-button');
+    const activarIndicesBtn = document.getElementById('activar-indices');
+    const desactivarIndicesBtn = document.getElementById('desactivar-indices');
 
     function actualizarIndexControls() {
       if (!indexControls) return;
-      const selectedStrategy = (tsEstrategia && typeof tsEstrategia.getValue === 'function')
-        ? tsEstrategia.getValue()
-        : document.getElementById('estrategia').value;
+      const selectedStrategy = document.getElementById('estrategia').value;
       const mostrar = selectedStrategy === 'optimizada_indices';
       indexControls.style.display = mostrar ? 'flex' : 'none';
       if (mostrar) {
         cargarEstadoIndices();
-      } else {
-        indexMessage.textContent = 'Usa esta opción solo con la estrategia Optimizada + Índices.';
       }
     }
 
     function cargarEstadoIndices() {
       if (!indexStatus) return;
       indexStatus.textContent = 'Estado de índices: consultando...';
-      if (!indexActionButton) return;
       fetch(indicesEstadoUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
         .then(response => response.json())
         .then(data => {
           const activo = data.todos_activos === true;
           indexStatus.textContent = activo ? 'Estado de índices: activos' : 'Estado de índices: inactivos';
-          indexActionButton.textContent = activo ? 'Eliminar índices' : 'Crear índices';
-          indexMessage.textContent = activo ? 'Los índices ya están activos.' : 'Los índices no están activos aún.';
+          activarIndicesBtn.disabled = activo;
+          desactivarIndicesBtn.disabled = !activo;
         })
         .catch(() => {
           indexStatus.textContent = 'No se pudo consultar el estado de índices.';
-          indexActionButton.textContent = 'Crear índices';
-          indexMessage.textContent = 'Verifique la conexión y que su base de datos sea SQL Server.';
+          activarIndicesBtn.disabled = false;
+          desactivarIndicesBtn.disabled = false;
         });
     }
 
     function cambiarEstadoIndices(accion) {
-      if (!indexActionButton) return;
       const token = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      indexActionButton.disabled = true;
+      activarIndicesBtn.disabled = true;
+      desactivarIndicesBtn.disabled = true;
       indexStatus.textContent = 'Estado de índices: actualizando...';
 
       fetch(indicesToggleUrl, {
@@ -408,9 +399,9 @@
           if (data.ok) {
             const activo = data.indices_activos.todos_activos === true;
             indexStatus.textContent = activo ? 'Estado de índices: activos' : 'Estado de índices: inactivos';
-            indexActionButton.textContent = activo ? 'Eliminar índices' : 'Crear índices';
-            indexActionButton.disabled = false;
-            indexMessage.textContent = activo ? 'Los índices fueron activados correctamente.' : 'Los índices fueron eliminados correctamente.';
+            activarIndicesBtn.disabled = activo;
+            desactivarIndicesBtn.disabled = !activo;
+            indexMessage.textContent = data.mensaje || 'Estado de índices actualizado.';
           } else {
             throw new Error(data.error || 'Error al cambiar índices');
           }
@@ -418,23 +409,23 @@
         .catch(() => {
           indexStatus.textContent = 'No se pudo actualizar el estado de índices.';
           indexMessage.textContent = 'Verifique la conexión y que su base de datos sea SQL Server.';
-          indexActionButton.disabled = false;
+          activarIndicesBtn.disabled = false;
+          desactivarIndicesBtn.disabled = false;
         });
     }
 
-    if (indexActionButton) {
-      indexActionButton.addEventListener('click', function() {
-        const accion = indexActionButton.textContent.includes('Eliminar') ? 'eliminar' : 'crear';
-        cambiarEstadoIndices(accion);
+    if (activarIndicesBtn) {
+      activarIndicesBtn.addEventListener('click', function() {
+        cambiarEstadoIndices('crear');
+      });
+    }
+    if (desactivarIndicesBtn) {
+      desactivarIndicesBtn.addEventListener('click', function() {
+        cambiarEstadoIndices('eliminar');
       });
     }
 
-    if (document.getElementById('estrategia')) {
-      document.getElementById('estrategia').addEventListener('change', actualizarIndexControls);
-    }
-    if (tsEstrategia && typeof tsEstrategia.on === 'function') {
-      tsEstrategia.on('change', actualizarIndexControls);
-    }
+    document.getElementById('estrategia').addEventListener('change', actualizarIndexControls);
 
     actualizarIndexControls();
 
@@ -490,25 +481,11 @@
 
     window.resetForm = function() {
       document.getElementById('filter-form').reset();
-      if (tomSelectProduct) {
+      if(tomSelectProduct) {
           tomSelectProduct.clear();
           document.getElementById('product-info').textContent = '';
       }
-      if (tsEstrategia && typeof tsEstrategia.setValue === 'function') {
-          tsEstrategia.setValue('tradicional');
-      }
-      if (tsAnioMes && typeof tsAnioMes.setValue === 'function') {
-          const selAnioMes = document.getElementById('sel_anio_mes');
-          tsAnioMes.setValue(selAnioMes ? selAnioMes.value : '');
-      }
-      if (tsMes && typeof tsMes.setValue === 'function') {
-          const selMes = document.getElementById('sel_mes');
-          tsMes.setValue(selMes ? selMes.value : '');
-      }
-      if (tsAnio && typeof tsAnio.setValue === 'function') {
-          const selAnio = document.getElementById('sel_anio');
-          tsAnio.setValue(selAnio ? selAnio.value : '');
-      }
+      otherSelects.forEach(ts => ts.sync()); // Sincroniza visualmente con select original
       toggleSections('fechas');
       actualizarIndexControls();
       

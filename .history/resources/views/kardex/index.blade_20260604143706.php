@@ -173,6 +173,16 @@
           </select>
         </div>
 
+        <div class="filter-section" id="index-controls" style="display: {{ request('estrategia') == 'optimizada_indices' ? 'flex' : 'none' }}; flex-direction: column; gap: 10px;">
+          <label>Administrar índices</label>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div id="index-status" style="font-size: 0.95rem; font-weight: 600; color: var(--text);">Estado de índices: consultando...</div>
+            <button type="button" id="activar-indices" class="btn btn-secondary" style="padding: 10px 18px;">Activar índices</button>
+            <button type="button" id="desactivar-indices" class="btn btn-secondary" style="padding: 10px 18px;">Desactivar índices</button>
+          </div>
+          <div id="index-message" style="font-size: 0.85rem; color: var(--text-muted);">Activa o desactiva los índices cuando uses la estrategia Optimizada + Índices.</div>
+        </div>
+
         <div class="filter-section">
           <label>Consultar Por</label>
           <div class="radio-group" style="background: var(--bg2); padding: 10px 16px; border: 1px solid var(--border); border-radius: 12px;">
@@ -315,7 +325,6 @@
       },
       onChange: function(value) {
         const infoDiv = document.getElementById('product-info');
-        if (!infoDiv) return;
         if (value) {
             const item = this.options[value];
             infoDiv.textContent = item ? `Descripción: ${item.Descripcion}` : '';
