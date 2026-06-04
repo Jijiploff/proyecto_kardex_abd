@@ -3,7 +3,7 @@
 
     {{-- Previous --}}
     @if ($paginator->onFirstPage())
-        <button class="page-btn" disabled style="opacity:.35;cursor:not-allowed;">
+        <button class="page-btn" disabled>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
     @else
@@ -15,7 +15,7 @@
     {{-- Pages --}}
     @foreach ($elements as $element)
         @if (is_string($element))
-            <button class="page-btn" disabled style="opacity:.4;cursor:default;">…</button>
+            <button class="page-btn" disabled>…</button>
         @endif
         @if (is_array($element))
             @foreach ($element as $page => $url)
@@ -34,7 +34,7 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </a>
     @else
-        <button class="page-btn" disabled style="opacity:.35;cursor:not-allowed;">
+        <button class="page-btn" disabled>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
     @endif
