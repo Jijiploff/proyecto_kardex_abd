@@ -94,9 +94,17 @@
                   <span class="badge" style="background: rgba(245, 200, 79, 0.15); color: var(--accent3); border: 1px solid rgba(245, 200, 79, 0.25);">{{ $mov->tipo_nombre ?? 'Ajuste' }}</span>
                 @endif
               </td>
-              <td style="padding: 18px 16px; text-align: right; color: var(--text-muted); font-weight: 500;">S/ {{ number_format($mov->costo_unitario, 2) }}</td>
+              <td style="padding: 18px 16px; text-align: right; color: var(--text-muted); font-weight: 500;">
+                @if($mov->comprobante === 'ACUMULADO')
+                  —
+                @else
+                  S/ {{ number_format($mov->costo_unitario, 2) }}
+                @endif
+              </td>
               <td style="padding: 18px 16px; text-align: right; font-weight: 700; font-size: 15px;">
-                @if($mov->tipo == 'entrada')
+                @if($mov->comprobante === 'ACUMULADO')
+                  —
+                @elseif($mov->tipo == 'entrada')
                   <span style="color: var(--accent2);">+{{ number_format($mov->cantidad, 2) }}</span>
                 @elseif($mov->tipo == 'salida')
                   <span style="color: #ff5a5a;">{{ number_format($mov->cantidad, 2) }}</span>
