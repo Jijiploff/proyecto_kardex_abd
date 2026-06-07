@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\KardexController;
+use App\Http\Controllers\ReportesController;
 
 
 Route::get('/', function () {
@@ -39,6 +40,22 @@ Route::get('/kardex', [KardexController::class, 'index'])->name('kardex.index');
 Route::get('/kardex/indices/estado', [KardexController::class, 'estadoIndices'])->name('kardex.indices.estado');
 Route::post('/kardex/indices/toggle', [KardexController::class, 'toggleIndices'])->name('kardex.indices.toggle');
 Route::get('/api/productos/buscar', [KardexController::class, 'buscarProductos'])->name('api.productos.buscar');
+
+// ── Reportes ───────────────────────────────────────────────────────────────
+Route::get('/reportes', [ReportesController::class, 'index'])->name('reportes.index');
+Route::get('/reportes/stock-critico', [ReportesController::class, 'stockCritico'])->name('reportes.stock-critico');
+Route::get('/reportes/resumen-mensual', [ReportesController::class, 'resumenMensual'])->name('reportes.resumen-mensual');
+Route::get('/reportes/valor-inventario', [ReportesController::class, 'valorInventario'])->name('reportes.valor-inventario');
+
+// Exportaciones PDF
+Route::get('/reportes/pdf/stock-critico', [ReportesController::class, 'exportPdfStockCritico'])->name('reportes.pdf.stock-critico');
+Route::get('/reportes/pdf/resumen-mensual', [ReportesController::class, 'exportPdfResumenMensual'])->name('reportes.pdf.resumen-mensual');
+Route::get('/reportes/pdf/valor-inventario', [ReportesController::class, 'exportPdfValorInventario'])->name('reportes.pdf.valor-inventario');
+
+// Exportaciones Excel
+Route::get('/reportes/excel/stock-critico', [ReportesController::class, 'exportExcelStockCritico'])->name('reportes.excel.stock-critico');
+Route::get('/reportes/excel/resumen-mensual', [ReportesController::class, 'exportExcelResumenMensual'])->name('reportes.excel.resumen-mensual');
+Route::get('/reportes/excel/valor-inventario', [ReportesController::class, 'exportExcelValorInventario'])->name('reportes.excel.valor-inventario');
 
 // Ruta temporal para optimizar SP
 Route::get('/kardex/optimizar-sp', function () {
